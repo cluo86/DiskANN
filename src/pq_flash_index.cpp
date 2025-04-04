@@ -1608,6 +1608,10 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         }
 
         hops++;
+        // chengqi: try hardcode to terminate loop early
+        if (hops == k_search) 
+            break;
+
     }
 
     // re-sort by distance
