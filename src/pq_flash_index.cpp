@@ -1406,12 +1406,10 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
     // bookkeepping for Aquapipe
     float balancer = 0.0f;
-#define OPT_0 (15)
+#define OPT_0 (10)
     uint32_t next_opt = OPT_0;
     uint32_t max_num = 0;
-    uint32_t prefetch_offset = 1;
-    uint32_t stability = 0;
-    uint32_t unstability = 0;
+    uint32_t prefetch_offset = 0;
 
     std::vector<Neighbor> prev_full_retset = full_retset;
     prev_full_retset.push_back(Neighbor(best_medoid, dist_scratch[0]));
@@ -1665,12 +1663,10 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 #endif
             std::sort(full_retset.begin(), full_retset.end()); // default to use L2
 
-            stability = 0;
-            unstability = 0;
-            size_t first_unstable_idx = prefetch_offset;
+            int32_t stability = 0, unstability = 0;
 
             // # of elements with equal positions in R between two prefetching operations.
-            for (uint32_t i = 0; i < prev_full_retset.size(); ++i)
+            for (size_t i = 0; i < prev_full_retset.size(); ++i)
             {
                 if (full_retset[i].id == prev_full_retset[i].id)
                 {
@@ -1678,9 +1674,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 }
             }
 
+            size_t first_unstable_idx = prefetch_offset;
+
             // # of elements with different positions in R between two prefetching
             // operations, and these elements have already been prefetched
-            for (uint32_t i = 0; i < prefetch_offset; ++i)
+            for (size_t i = 0; i < prefetch_offset; ++i)
             {
                 if (full_retset[i].id != prev_full_retset[i].id)
                 {
@@ -1692,18 +1690,18 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 }
             }
 
-            size_t pp_size = pipeline_pool.size();
+            int32_t pp_size = (int32_t) pipeline_pool.size();
             // update balancer
             // can balancer be negative???
-            balancer = ((float)stability - 4.0f * (float)unstability + balancer) / 2.0f;
+            balancer = (stability - 4 * unstability + balancer) / 2.0f;
             // update max num
-            if (((float)(stability - pp_size + balancer) / 2.0f) < 0)
+            if (((stability - pp_size + balancer) / 2.0f) < 0)
             {
                 max_num = 0;
             }
             else
             {
-                max_num = std::floor((float)(stability - pp_size + balancer) / 2.0f);
+                max_num = std::floor((stability - pp_size + balancer) / 2.0f);
             }
 
             // update Opt
