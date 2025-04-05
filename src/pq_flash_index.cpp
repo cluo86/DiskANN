@@ -1404,6 +1404,24 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     uint32_t hops = 0;
     uint32_t num_ios = 0;
 
+    // bookkeepping for Aquapipe
+
+    // make a copy of full_retset
+    std::vector<Neighbor> prev_full_retset = full_retset;
+    prev_full_retset.push_back(Neighbor(best_medoid, dist_scratch[0]));
+
+    float balancer = 0.0f; // placeholder for balancer
+#define OPT_0 (15)
+    uint32_t next_opt = OPT_0; // initial prefetch point
+    uint32_t max_num = 0; //  maximum number of each prefetching operation 
+    uint32_t prefetch_offset = 1; 
+    uint32_t stability = 0;
+    uint32_t unstability = 0;
+
+    // for now, let's hard code pipeline pool
+    std::vector<uint32_t> pipeline_pool;
+    pipeline_pool.reserve(k_search);
+
     // cleared every iteration
     std::vector<uint32_t> frontier;
     frontier.reserve(2 * beam_width);
@@ -1608,6 +1626,159 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         }
 
         hops++;
+#ifdef DEBUG
+        // print sorted result set every 5 hops
+        // if (hops % 5 == 0)
+        // {
+        //     std::sort(full_retset.begin(), full_retset.end());
+        //     diskann::cout << "# hops: " << hops << std::endl;
+        //     diskann::cout << "===========================" << std::endl;
+        //     uint32_t print_count = std::min(k_search, full_retset.size());
+        //     for (uint32_t i = 0; i < print_count; i++)
+        //     {
+        //         diskann::cout << "  " << i << ": " << full_retset[i].id << "\t" << full_retset[i].distance << std::endl;
+        //     }
+        //     diskann::cout << "===========================" << std::endl;
+        // }
+#endif
+#define AQUA 1
+#ifdef AQUA
+#define DEBUG 1
+        // logic to emit early
+
+        // per section4.1 Result Set will be reranked in each iteration
+        // this would incur extra overhead
+        // Assume we don't need to use_reorder_data
+        if (hops == next_opt)
+        {
+
+            #ifdef DEBUG
+                // for debugging
+                diskann::cout << "Iteration " << hops << " Pipeline Pool (size=" << pipeline_pool.size() << "): ";
+                for (size_t i = 0; i < pipeline_pool.size(); ++i) {
+                    diskann::cout << pipeline_pool[i];
+                    if (i < pipeline_pool.size() - 1)
+                        diskann::cout << ", ";
+                }
+                diskann::cout << std::endl;
+            #endif
+            std::sort(full_retset.begin(), full_retset.end()); // default to use L2
+
+            stability = 0;
+            unstability = 0;
+            size_t first_unstable_idx = prefetch_offset;
+            
+            for (uint32_t i=0; i < prev_full_retset.size(); ++i)
+            {
+                if (full_retset[i].id != prev_full_retset[i].id)
+                {
+                    stability++;
+                }
+            }
+
+            for (uint32_t i=0; i < prefetch_offset; ++i)
+            {
+                if (full_retset[i].id != prev_full_retset[i].id)
+                {
+                    unstability++;
+                    if (i < first_unstable_idx)
+                    {
+                        first_unstable_idx = i;
+                    }
+                }
+                // else
+                // {
+                //     stability++;
+                // }
+            }
+    
+            size_t pp_size = pipeline_pool.size();
+            // update balancer
+            balancer = ((float)stability - 4.0f * (float)unstability + balancer) / 2.0f;
+            // update max num
+            if (((float)(stability - pp_size + balancer) / 2.0f) < 0)
+            {
+                max_num = 0;
+            } else
+            {
+                max_num = std::floor((float)(stability - pp_size + balancer) / 2.0f);
+            }
+            
+            // update Opt
+            /** 
+             * chengqi: AquaPipe mentioned that we need to ensure 
+             * Opt_{n+1} > Opt_n. However, it appears that equation 1 cannot guarantee this.
+             * For example, if pp.size = 0 and balancer = 1, using equation 1 as-is will cause a liveness 
+             * issue and stall prefetching.
+             * 
+             */
+            if (((float)(pp_size / k_search) * pp_size + 1.0f - balancer) < 0)
+            {
+                next_opt = next_opt + 1;
+            } else 
+            {
+                next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
+            }
+            // next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
+    
+            // for debugging
+            #ifdef DEBUG
+                diskann::cout << "Iteration " << hops 
+                            << " Stability metrics: stable=" << stability 
+                            << ", unstable=" << unstability 
+                            << ", first_unstable_idx=" << first_unstable_idx
+                            << ", balancer=" << balancer 
+                            << ", max_num=" << max_num
+                            << ", prefetch_offset=" << prefetch_offset
+                            << ", next_opt=" << next_opt
+                            << ", PPSIZE=" << pp_size
+                            << std::endl;
+            #endif
+    
+            // Debug actual result sets (IDs and distances)
+            if (unstability > 0) {
+                diskann::cout << "  Unstable results detected. First few items:" << std::endl;
+                uint32_t print_limit = (prefetch_offset > 10) ? 10 : prefetch_offset;
+                
+                diskann::cout << "  Pos\tCurrentID\tPrevID\tStatus" << std::endl;
+                for (uint32_t i = 0; i < print_limit; ++i) {
+                    bool is_stable = (full_retset[i].id == prev_full_retset[i].id);
+                    diskann::cout << "  " << i << "\t" 
+                                << full_retset[i].id << "\t\t" 
+                                << prev_full_retset[i].id << "\t"
+                                << (is_stable ? "STABLE" : "CHANGED")
+                                << std::endl;
+                }
+                if (first_unstable_idx < print_limit) {
+                    diskann::cout << "  First unstable position: " << first_unstable_idx 
+                                << " (Current: " << full_retset[first_unstable_idx].id 
+                                << ", Prev: " << prev_full_retset[first_unstable_idx].id << ")"
+                                << std::endl;
+                }
+            }
+    
+            // error detection
+            if (unstability > 0)
+            {
+                pipeline_pool.erase(pipeline_pool.begin() + first_unstable_idx, pipeline_pool.end());
+                prefetch_offset = first_unstable_idx;
+            }
+    
+            // perform prefetching
+            for (uint32_t i = 0; i < max_num; ++i)
+            {
+                pipeline_pool.push_back(full_retset[prefetch_offset].id);
+                prefetch_offset++;
+            }
+    
+            // make a copy of full_retset
+            prev_full_retset = full_retset;
+    
+
+        }
+
+#endif
+
     }
 
     // re-sort by distance
