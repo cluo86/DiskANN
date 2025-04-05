@@ -1713,15 +1713,17 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
              *
              */
             // next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
-            if (((float)(pp_size / k_search) * pp_size + 1.0f - balancer) < 0)
+            float prefetching_progress = (float) pp_size / (float) k_search;
+            if (std::floor(prefetching_progress * pp_size + 1.0f - balancer) > 0)
             {
-                next_opt = next_opt + 1;
+                // will it grow too fast??
+                next_opt = next_opt + std::floor(prefetching_progress * pp_size + 1.0f - balancer);
             }
             else
             {
-                // will it grow too fast??
-                next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
+                next_opt = next_opt + 1;                
             }
+            
 
 // for debugging
 #ifdef DEBUG
