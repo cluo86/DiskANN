@@ -1664,28 +1664,28 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             std::sort(full_retset.begin(), full_retset.end()); // default to use L2
 
             int32_t stability = 0, unstability = 0;
+            size_t first_unstable_idx = prefetch_offset;
 
-            // # of elements with equal positions in R between two prefetching operations.
+            // update stability and unstability
+            /**
+             * stability: # of elements with equal positions in R between two prefetching operations.
+             * unstability: # of elements with different positions in R between two prefetching
+             * operations, and these elements have already been prefetched
+             */
             for (size_t i = 0; i < prev_full_retset.size(); ++i)
             {
                 if (full_retset[i].id == prev_full_retset[i].id)
                 {
                     stability++;
-                }
-            }
-
-            size_t first_unstable_idx = prefetch_offset;
-
-            // # of elements with different positions in R between two prefetching
-            // operations, and these elements have already been prefetched
-            for (size_t i = 0; i < prefetch_offset; ++i)
-            {
-                if (full_retset[i].id != prev_full_retset[i].id)
+                } else 
                 {
-                    unstability++;
-                    if (i < first_unstable_idx)
+                    if (i < prefetch_offset)
                     {
-                        first_unstable_idx = i;
+                        unstability++;
+                        if (i < first_unstable_idx)
+                        {
+                            first_unstable_idx = i;
+                        }
                     }
                 }
             }
