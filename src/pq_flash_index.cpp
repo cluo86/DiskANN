@@ -1405,18 +1405,16 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     uint32_t num_ios = 0;
 
     // bookkeepping for Aquapipe
-
-    // make a copy of full_retset
-    std::vector<Neighbor> prev_full_retset = full_retset;
-    prev_full_retset.push_back(Neighbor(best_medoid, dist_scratch[0]));
-
-    float balancer = 0.0f; // placeholder for balancer
+    float balancer = 0.0f;
 #define OPT_0 (15)
-    uint32_t next_opt = OPT_0; // initial prefetch point
-    uint32_t max_num = 0; //  maximum number of each prefetching operation 
+    uint32_t next_opt = OPT_0;
+    uint32_t max_num = 0;
     uint32_t prefetch_offset = 1; 
     uint32_t stability = 0;
     uint32_t unstability = 0;
+
+    std::vector<Neighbor> prev_full_retset = full_retset;
+    prev_full_retset.push_back(Neighbor(best_medoid, dist_scratch[0]));
 
     // for now, let's hard code pipeline pool
     std::vector<uint32_t> pipeline_pool;
@@ -1644,10 +1642,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 #define AQUA 1
 #ifdef AQUA
 #define DEBUG 1
-        // logic to emit early
-
-        // per section4.1 Result Set will be reranked in each iteration
-        // this would incur extra overhead
+        // chengqi: logic to emit early
+        /**
+         * Per section4.1, result set will be reranked in each iteration.
+         * Termination condition should still be L \ V != ∅
+         */
         // Assume we don't need to use_reorder_data
         if (hops == next_opt)
         {
@@ -1668,14 +1667,17 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             unstability = 0;
             size_t first_unstable_idx = prefetch_offset;
             
+            // # of elements with equal positions in R between two prefetching operations.
             for (uint32_t i=0; i < prev_full_retset.size(); ++i)
             {
-                if (full_retset[i].id != prev_full_retset[i].id)
+                if (full_retset[i].id == prev_full_retset[i].id)
                 {
                     stability++;
                 }
             }
-
+            
+            // # of elements with different positions in R between two prefetching
+            // operations, and these elements have already been prefetched
             for (uint32_t i=0; i < prefetch_offset; ++i)
             {
                 if (full_retset[i].id != prev_full_retset[i].id)
@@ -1686,14 +1688,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                         first_unstable_idx = i;
                     }
                 }
-                // else
-                // {
-                //     stability++;
-                // }
             }
     
             size_t pp_size = pipeline_pool.size();
             // update balancer
+            // can balancer be negative???
             balancer = ((float)stability - 4.0f * (float)unstability + balancer) / 2.0f;
             // update max num
             if (((float)(stability - pp_size + balancer) / 2.0f) < 0)
@@ -1703,23 +1702,25 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             {
                 max_num = std::floor((float)(stability - pp_size + balancer) / 2.0f);
             }
-            
+
             // update Opt
             /** 
              * chengqi: AquaPipe mentioned that we need to ensure 
              * Opt_{n+1} > Opt_n. However, it appears that equation 1 cannot guarantee this.
-             * For example, if pp.size = 0 and balancer = 1, using equation 1 as-is will cause a liveness 
+             * e.g., if pp.size = 0 and balancer = 1, using equation 1 as-is will cause a liveness 
              * issue and stall prefetching.
              * 
              */
+            // next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
             if (((float)(pp_size / k_search) * pp_size + 1.0f - balancer) < 0)
             {
                 next_opt = next_opt + 1;
             } else 
             {
+                // will it grow too fast??
                 next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
             }
-            // next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
+            
     
             // for debugging
             #ifdef DEBUG
@@ -1735,7 +1736,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                             << std::endl;
             #endif
     
-            // Debug actual result sets (IDs and distances)
+            // debug actual result sets (IDs and distances)
             if (unstability > 0) {
                 diskann::cout << "  Unstable results detected. First few items:" << std::endl;
                 uint32_t print_limit = (prefetch_offset > 10) ? 10 : prefetch_offset;
@@ -1767,11 +1768,16 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             // perform prefetching
             for (uint32_t i = 0; i < max_num; ++i)
             {
+                if (prefetch_offset >= k_search)
+                {
+                    break;
+                }                
                 pipeline_pool.push_back(full_retset[prefetch_offset].id);
                 prefetch_offset++;
+
             }
     
-            // make a copy of full_retset
+            // record last R for future cmp
             prev_full_retset = full_retset;
     
 
