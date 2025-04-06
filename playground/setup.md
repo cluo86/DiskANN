@@ -1,0 +1,24 @@
+# Setup
+
+Refer to the [workflows/SSD_index.md](https://github.com/microsoft/DiskANN/blob/main/workflows/SSD_index.md) for building index.
+
+## Generate small query set
+Run create_small_query to generate a small subset of queries for testing.
+
+Usage: ./create_small_query <input_file> <output_file> <num_queries_to_extract>
+
+Example:
+```bash
+./create_small_query ../build/data/sift/sift_query.fbin ../build/data/sift/10q.fbin 10
+```
+
+## Running the disk index search
+cd into build dir
+run 
+./apps/search_disk_index  --data_type float --dist_fn l2 --index_path_prefix data/sift/disk_index_sift_learn_R32_L50_A1.2 --query_file data/sift/10q.fbin  --gt_file data/sift/sift_query_learn_gt100 -K 10 -L 100 --result_path data/sift/res --num_nodes_to_cache 10000 -W 1 -T 1
+
+
+## Notes
+
+- Currently, the prefetch results are recorded to the local data strucure `pipeline_pool` and emitted to stdout. 
+- Later, we can adapt it to use a callback function, api, file, or other methods to connect LLM with DiskANN.
