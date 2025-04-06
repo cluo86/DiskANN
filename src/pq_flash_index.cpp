@@ -1640,7 +1640,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 #endif
 #define AQUA 1
 #ifdef AQUA
-#define DEBUG 1
+// #define DEBUG 1
         // chengqi: logic to emit early
         /**
          * Per section4.1, result set will be reranked in each iteration.
@@ -1725,14 +1725,13 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             }
             
 
-// for debugging
 #ifdef DEBUG
             diskann::cout << "Iteration " << hops << " Stability metrics: stable=" << stability
                           << ", unstable=" << unstability << ", first_unstable_idx=" << first_unstable_idx
                           << ", balancer=" << balancer << ", max_num=" << max_num
                           << ", prefetch_offset=" << prefetch_offset << ", next_opt=" << next_opt
                           << ", PPSIZE=" << pp_size << std::endl;
-#endif
+
 
             // debug actual result sets (IDs and distances)
             if (unstability > 0)
@@ -1754,7 +1753,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                                   << ", Prev: " << prev_full_retset[first_unstable_idx].id << ")" << std::endl;
                 }
             }
-
+#endif
             // error detection
             if (unstability > 0)
             {
