@@ -1622,25 +1622,10 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         }
 
         hops++;
-#ifdef DEBUG
-        // print sorted result set every 5 hops
-        // if (hops % 5 == 0)
-        // {
-        //     std::sort(full_retset.begin(), full_retset.end());
-        //     diskann::cout << "# hops: " << hops << std::endl;
-        //     diskann::cout << "===========================" << std::endl;
-        //     uint32_t print_count = std::min(k_search, full_retset.size());
-        //     for (uint32_t i = 0; i < print_count; i++)
-        //     {
-        //         diskann::cout << "  " << i << ": " << full_retset[i].id << "\t" << full_retset[i].distance <<
-        //         std::endl;
-        //     }
-        //     diskann::cout << "===========================" << std::endl;
-        // }
-#endif
+
 #define AQUA 1
 #ifdef AQUA
-// #define DEBUG 1
+#define DEBUG 1
         // chengqi: logic to emit early
         /**
          * Per section4.1, result set will be reranked in each iteration.
@@ -1774,6 +1759,22 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
             // record last R for future cmp
             prev_full_retset = full_retset;
+
+#ifdef WRITE_TO_FILE
+            // for now, just write out the pp to a local file
+            std::ofstream pp_file("pipeline_pool.txt", std::ios::app);
+            if (pp_file.is_open()) {
+                pp_file << "Iteration " << hops << ": ";
+                for (size_t i = 0; i < pipeline_pool.size(); ++i) {
+                    pp_file << pipeline_pool[i];
+                    if (i < pipeline_pool.size() - 1)
+                        pp_file << ",";
+                }
+                pp_file << std::endl;
+                pp_file.close();
+            }
+#endif
+
         }
 
 #endif
