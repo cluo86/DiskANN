@@ -1404,10 +1404,24 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     uint32_t hops = 0;
     uint32_t num_ios = 0;
 
+    // cleared every iteration
+    std::vector<uint32_t> frontier;
+    frontier.reserve(2 * beam_width);
+    std::vector<std::pair<uint32_t, char *>> frontier_nhoods;
+    frontier_nhoods.reserve(2 * beam_width);
+    std::vector<AlignedRead> frontier_read_reqs;
+    frontier_read_reqs.reserve(2 * beam_width);
+    std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t *>>> cached_nhoods;
+    cached_nhoods.reserve(2 * beam_width);
+
     // bookkeepping for Aquapipe
     float balancer = 0.0f;
-#define OPT_0 (10)
+#define OPT_0 (20)
     uint32_t next_opt = OPT_0;
+    // let's try base case that's linear in the number of k_search
+    next_opt = (uint32_t)(2.0f * k_search);
+    diskann::cout << "OPT base case: " << next_opt << std::endl;
+
     uint32_t max_num = 0;
     uint32_t prefetch_offset = 0;
 
@@ -1418,15 +1432,12 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     std::vector<uint32_t> pipeline_pool;
     pipeline_pool.reserve(k_search);
 
-    // cleared every iteration
-    std::vector<uint32_t> frontier;
-    frontier.reserve(2 * beam_width);
-    std::vector<std::pair<uint32_t, char *>> frontier_nhoods;
-    frontier_nhoods.reserve(2 * beam_width);
-    std::vector<AlignedRead> frontier_read_reqs;
-    frontier_read_reqs.reserve(2 * beam_width);
-    std::vector<std::pair<uint32_t, std::pair<uint32_t, uint32_t *>>> cached_nhoods;
-    cached_nhoods.reserve(2 * beam_width);
+    // Track historical positions of elements in R across multiple iterations
+    // Key: element ID, Value: vector of <iteration_number, position> pairs
+    std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> element_position_history;
+    // Retention window - how many iterations of history to keep
+    const uint32_t POSITION_HISTORY_RETENTION = k_search;
+
 
     while (retset.has_unexpanded_node() && num_ios < io_limit)
     {
@@ -1648,6 +1659,21 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 #endif
             std::sort(full_retset.begin(), full_retset.end()); // default to use L2
 
+
+            // update postiion history for all elements in R
+            for (size_t i = 0; i < full_retset.size(); ++i) {
+                uint32_t id = full_retset[i].id;
+                
+                // add current position to history
+                auto& history = element_position_history[id];
+                history.push_back(std::make_pair(hops, i));
+                
+                // maintain bounded history size
+                if (history.size() > POSITION_HISTORY_RETENTION) {
+                    history.erase(history.begin());
+                }
+            }
+
             int32_t stability = 0, unstability = 0;
             size_t first_unstable_idx = prefetch_offset;
 
@@ -1675,6 +1701,13 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 }
             }
 
+            // error detection: remove elements from pp whose position has changed
+            if (unstability > 0)
+            {
+                pipeline_pool.erase(pipeline_pool.begin() + first_unstable_idx, pipeline_pool.end());
+                prefetch_offset = first_unstable_idx;
+            }
+
             int32_t pp_size = (int32_t) pipeline_pool.size();
             // update balancer
             // can balancer be negative???
@@ -1689,7 +1722,48 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 max_num = std::floor((stability - pp_size + balancer) / 2.0f);
             }
 
-            // update Opt
+            // perform prefetching w/ historical positions
+            for (uint32_t i = 0; i < max_num; ++i)
+            {
+                if (prefetch_offset >= k_search)
+                {
+                    break;
+                }
+
+                uint32_t candidate_id = full_retset[prefetch_offset].id;
+                auto& history = element_position_history[candidate_id];
+                
+                // check if position has been stable across history
+                bool is_stable = true;
+                if (history.size() == POSITION_HISTORY_RETENTION) {
+                    uint32_t current_pos = prefetch_offset;
+                    // check if position has changed in history
+                    for (size_t j = 1; j < history.size(); j++) {
+                        if (history[j].second != current_pos) {
+                            is_stable = false;
+                            break;
+                        }
+                    }
+                } else {
+                    // if there's no history, we can't determine stability
+                    // that's to say, we can't prefetch this element 
+                    // if its position has not stayed the same for the retention window
+                    is_stable = false;
+                }
+
+                if (is_stable) {
+                    pipeline_pool.push_back(candidate_id);
+                    prefetch_offset++;
+                } else {
+                    break; // stop prefetching if we encounter an unstable element
+                }
+
+            }
+
+            // record last R for future cmp
+            prev_full_retset = full_retset;
+
+            // update Opt: calculate next prefetching iteration
             /**
              * chengqi: AquaPipe mentioned that we need to ensure
              * Opt_{n+1} > Opt_n. However, it appears that equation 1 cannot guarantee this.
@@ -1739,26 +1813,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 }
             }
 #endif
-            // error detection
-            if (unstability > 0)
-            {
-                pipeline_pool.erase(pipeline_pool.begin() + first_unstable_idx, pipeline_pool.end());
-                prefetch_offset = first_unstable_idx;
-            }
-
-            // perform prefetching
-            for (uint32_t i = 0; i < max_num; ++i)
-            {
-                if (prefetch_offset >= k_search)
-                {
-                    break;
-                }
-                pipeline_pool.push_back(full_retset[prefetch_offset].id);
-                prefetch_offset++;
-            }
-
-            // record last R for future cmp
-            prev_full_retset = full_retset;
 
 #ifdef WRITE_TO_FILE
             // for now, just write out the pp to a local file
