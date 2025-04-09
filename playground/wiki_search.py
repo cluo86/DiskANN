@@ -81,36 +81,71 @@ class Encoder:
         query_emb = query_emb.astype(np.float32, order="C")
         return query_emb
 
-def search(query):
+def search(index, query):
     encoder = Encoder(
         model_path="intfloat/e5-base-v2",
         pooling_method="mean",
         max_length=180,
         use_fp16=True,
     )
-    index = diskannpy.StaticDiskIndex(
-        index_directory="/data/rso31/DiskANN_indexes/e5_diskann_0.6",
-        num_threads=0,
-        num_nodes_to_cache=0,
-    )
-    corpus = load_corpus("/data/users/cluo86/FlashRAG/corpus/wiki18_100w.jsonl")
+
 
     emb = encoder.encode(query)
     emb = emb.flatten()
 
     print("embeddings created")
 
-    res = index.search(emb, k_neighbors=10, complexity=10, beam_width=1)
-    i = res.identifiers.tolist()
-    d = res.distances.tolist()
-    for ii, dd in zip(i, d):
-        print(corpus[ii], dd)
+    res = index.search(emb, k_neighbors=10, complexity=50, beam_width=1)
+    return res
 
+
+
+def print_results(results, c : Dataset):
+    
+    for res in results:
+        print("=" * 20)
+        i = res.identifiers.tolist()
+        d = res.distances.tolist()
+        for ii, dd in zip(i, d):
+            print(c[ii], dd)
+        print("=" * 20)
+    
 
 def main():
-    # search("What is the capital of France?")
-    search("What is the capital of Japan?")
 
+    corpus = load_corpus("/data/home/cluo86/FlashRAG/corpus/wiki18_100w.jsonl")
+    
+    index = diskannpy.StaticDiskIndex(
+        index_directory="/data/rso31/DiskANN_indexes/e5_diskann_0.6",
+        num_threads=0,
+        num_nodes_to_cache=0,
+    )
+    
+    print("=" * 30)
+    search(index, "Warmup.")
+    print("=" * 30)
+    
+
+    encoder = Encoder(
+        model_path="intfloat/e5-base-v2",
+        pooling_method="mean",
+        max_length=180,
+        use_fp16=True,
+    )
+
+    queries = [
+        "What is the capital of Japan?",
+        # "What is the capital of France?",
+        # "Who was awarded the Oceanography Society's Jerlov Award in 2018?"
+    ]
+
+    embs = [encoder.encode(query).flatten() for query in queries]
+    
+    for emb in embs:
+        print("=" * 20)
+        res = index.search(emb, k_neighbors=10, complexity=100, beam_width=1)
+        print_results([res], c=corpus)
+        print("=" * 20)
 
 if __name__ == "__main__":
     main()

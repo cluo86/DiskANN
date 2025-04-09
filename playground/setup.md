@@ -22,3 +22,9 @@ run
 
 - Currently, the prefetch results are recorded to the local data strucure `pipeline_pool` and emitted to stdout. 
 - Later, we can adapt it to use a callback function, api, file, or other methods to connect LLM with DiskANN.
+
+
+## how to run wiki_search.py
+
+uv sync
+uv build && uv pip install dist/*.whl

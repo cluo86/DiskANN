@@ -1272,6 +1272,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                                                  QueryStats *stats)
 {
 
+    auto startTime = std::chrono::high_resolution_clock::now();
     uint64_t num_sector_per_nodes = DIV_ROUND_UP(_max_node_len, defaults::SECTOR_LEN);
     if (beam_width > num_sector_per_nodes * defaults::MAX_N_SECTOR_READS)
         throw ANNException("Beamwidth can not be higher than defaults::MAX_N_SECTOR_READS", -1, __FUNCSIG__, __FILE__,
@@ -1419,8 +1420,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 #define OPT_0 (20)
     uint32_t next_opt = OPT_0;
     // let's try base case that's linear in the number of k_search
-    next_opt = (uint32_t)(2.0f * k_search);
-    diskann::cout << "OPT base case: " << next_opt << std::endl;
+    // next_opt = (uint32_t)(2.0f * k_search);
 
     uint32_t max_num = 0;
     uint32_t prefetch_offset = 0;
@@ -1436,8 +1436,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     // Key: element ID, Value: vector of <iteration_number, position> pairs
     std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> element_position_history;
     // Retention window - how many iterations of history to keep
-    const uint32_t POSITION_HISTORY_RETENTION = k_search;
-
+    const uint32_t POSITION_HISTORY_RETENTION = 3;
 
     while (retset.has_unexpanded_node() && num_ios < io_limit)
     {
@@ -1760,6 +1759,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
             }
 
+            // print out time elapsed
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+            diskann::cout << "Time elapsed for iteration " << hops << ": " << duration.count() << " us" << std::endl;
+
             // record last R for future cmp
             prev_full_retset = full_retset;
 
@@ -1911,6 +1915,9 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             }
         }
     }
+
+    diskann::cout << "elapsed time for beam search: " << query_timer.elapsed() << " us" << std::endl;
+    diskann::cout << "num hops: " << hops << std::endl;
 
 #ifdef USE_BING_INFRA
     ctx.m_completeCount = 0;
