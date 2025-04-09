@@ -1416,15 +1416,11 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
     cached_nhoods.reserve(2 * beam_width);
 
     // bookkeepping for Aquapipe
-    float balancer = 0.0f;
-#define OPT_0 (20)
+#define OPT_0 (2)
     uint32_t next_opt = OPT_0;
-    // let's try base case that's linear in the number of k_search
-    // next_opt = (uint32_t)(2.0f * k_search);
-
     uint32_t max_num = 0;
     uint32_t prefetch_offset = 0;
-
+    float balancer = 0.0f;
     std::vector<Neighbor> prev_full_retset = full_retset;
     prev_full_retset.push_back(Neighbor(best_medoid, dist_scratch[0]));
 
@@ -1633,9 +1629,37 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
         hops++;
 
+#define COLLECT_TRACES 1
+#ifdef COLLECT_TRACES
+        // chengqi: logic to collect traces
+        auto time_elapsed = query_timer.elapsed();
+        // get indices for this iteration
+        std::vector<uint32_t> indices_this_iter;
+        std::sort(full_retset.begin(), full_retset.end());
+        for (const auto &nbr : full_retset)
+        {
+            // within the top k_search
+            if (indices_this_iter.size() < k_search)
+            {
+                indices_this_iter.push_back(nbr.id);
+            }
+            else
+            {
+                break;
+            }
+        }
+        // print out the indices
+        diskann::cout << "Iteration " << hops << " (time=" << time_elapsed << " us) ";
+        for (size_t i = 0; i < indices_this_iter.size(); ++i)
+        {
+            diskann::cout << indices_this_iter[i] << " ";
+        }
+        diskann::cout << std::endl;
+#endif
+
 #define AQUA 1
 #ifdef AQUA
-#define DEBUG 1
+// #define DEBUG 1
         // chengqi: logic to emit early
         /**
          * Per section4.1, result set will be reranked in each iteration.
@@ -1645,17 +1669,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         if (hops == next_opt)
         {
 
-#ifdef DEBUG
-            // for debugging
-            diskann::cout << "Iteration " << hops << " Pipeline Pool (size=" << pipeline_pool.size() << "): ";
-            for (size_t i = 0; i < pipeline_pool.size(); ++i)
-            {
-                diskann::cout << pipeline_pool[i];
-                if (i < pipeline_pool.size() - 1)
-                    diskann::cout << ", ";
-            }
-            diskann::cout << std::endl;
-#endif
             std::sort(full_retset.begin(), full_retset.end()); // default to use L2
 
 
@@ -1759,11 +1772,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
             }
 
-            // print out time elapsed
-            auto endTime = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-            diskann::cout << "Time elapsed for iteration " << hops << ": " << duration.count() << " us" << std::endl;
-
             // record last R for future cmp
             prev_full_retset = full_retset;
 
@@ -1788,14 +1796,22 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
             }
             
 
-#ifdef DEBUG
-            diskann::cout << "Iteration " << hops << " Stability metrics: stable=" << stability
+#ifdef COLLECT_TRACES
+            // diskann::cout << "Iteration " << hops << " Pipeline Pool (size=" << pipeline_pool.size() << "): ";
+            diskann::cout << "| Pipeline Pool (size=" << pipeline_pool.size() << "): ";
+            for (size_t i = 0; i < pipeline_pool.size(); ++i)
+            {
+                diskann::cout << pipeline_pool[i];
+                if (i < pipeline_pool.size() - 1)
+                    diskann::cout << ", ";
+            }
+            diskann::cout << "| Opt=" << hops << " Stability metrics: stable=" << stability
                           << ", unstable=" << unstability << ", first_unstable_idx=" << first_unstable_idx
                           << ", balancer=" << balancer << ", max_num=" << max_num
                           << ", prefetch_offset=" << prefetch_offset << ", next_opt=" << next_opt
                           << ", PPSIZE=" << pp_size << std::endl;
-
-
+#endif
+#ifdef DEBUG
             // debug actual result sets (IDs and distances)
             if (unstability > 0)
             {
@@ -1916,8 +1932,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         }
     }
 
-    diskann::cout << "elapsed time for beam search: " << query_timer.elapsed() << " us" << std::endl;
-    diskann::cout << "num hops: " << hops << std::endl;
+
 
 #ifdef USE_BING_INFRA
     ctx.m_completeCount = 0;
