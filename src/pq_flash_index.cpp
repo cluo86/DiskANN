@@ -1654,7 +1654,7 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
         {
             diskann::cout << indices_this_iter[i] << " ";
         }
-        diskann::cout << std::endl;
+        
 #endif
 
 #define AQUA 1
@@ -1798,18 +1798,18 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
 #ifdef COLLECT_TRACES
             // diskann::cout << "Iteration " << hops << " Pipeline Pool (size=" << pipeline_pool.size() << "): ";
-            diskann::cout << "| Pipeline Pool (size=" << pipeline_pool.size() << "): ";
+            diskann::cout << " | Pipeline Pool (size=" << pipeline_pool.size() << "): ";
             for (size_t i = 0; i < pipeline_pool.size(); ++i)
             {
                 diskann::cout << pipeline_pool[i];
                 if (i < pipeline_pool.size() - 1)
                     diskann::cout << ", ";
             }
-            diskann::cout << "| Opt=" << hops << " Stability metrics: stable=" << stability
+            diskann::cout << " | Opt=" << hops << " Stability metrics: stable=" << stability
                           << ", unstable=" << unstability << ", first_unstable_idx=" << first_unstable_idx
                           << ", balancer=" << balancer << ", max_num=" << max_num
                           << ", prefetch_offset=" << prefetch_offset << ", next_opt=" << next_opt
-                          << ", PPSIZE=" << pp_size << std::endl;
+                          << ", PPSIZE=" << pp_size;
 #endif
 #ifdef DEBUG
             // debug actual result sets (IDs and distances)
@@ -1851,6 +1851,10 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
         }
 
+#endif
+
+#ifdef COLLECT_TRACES
+        diskann::cout << std::endl; 
 #endif
     }
 
