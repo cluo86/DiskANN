@@ -9,6 +9,9 @@
 *.user
 *.userosscache
 *.sln.docstates
+playground/saved_queries
+playgoround/*.log
+playgoround/*.trace
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
