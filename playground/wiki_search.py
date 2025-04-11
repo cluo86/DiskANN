@@ -95,7 +95,7 @@ def search(index, query):
 
     print("embeddings created")
 
-    res = index.search(emb, k_neighbors=10, complexity=50, beam_width=1)
+    res = index.search(emb, k_neighbors=10, complexity=1000, beam_width=1)
     return res
 
 
@@ -112,20 +112,15 @@ def print_results(results, c : Dataset):
     
 
 def main():
-
-    corpus = load_corpus("/data/home/cluo86/FlashRAG/corpus/wiki18_100w.jsonl")
+    
+    # corpus = load_corpus("/data/home/cluo86/FlashRAG/corpus/wiki18_100w.jsonl")
     
     index = diskannpy.StaticDiskIndex(
-        index_directory="/data/rso31/DiskANN_indexes/e5_diskann_0.6",
+        index_directory="/data/FlashRAG_data/indexes/e5_diskann_25.0",
         num_threads=0,
         num_nodes_to_cache=0,
     )
     
-    print("=" * 30)
-    search(index, "Warmup.")
-    print("=" * 30)
-    
-
     encoder = Encoder(
         model_path="intfloat/e5-base-v2",
         pooling_method="mean",
@@ -133,19 +128,35 @@ def main():
         use_fp16=True,
     )
 
-    queries = [
-        "What is the capital of Japan?",
-        # "What is the capital of France?",
-        # "Who was awarded the Oceanography Society's Jerlov Award in 2018?"
-    ]
+    selected_set = 0    
+    gt_files = ["gt_files/squad_gt10", "gt_files/wq_gt100"]
+    datasets = ["rajpurkar/squad", "Stanford/web_questions"]
 
-    embs = [encoder.encode(query).flatten() for query in queries]
+    from datasets import load_dataset
+    # ds = load_dataset("Stanford/web_questions")
+    ds = load_dataset(datasets[selected_set])
+    # we only need questions in the dataset
+    questions = ds["train"]["question"]
+    queries = questions[:400]
+    # Process queries in batches
+    batch_size = 100  # adjust the batch size as needed
+    ids_list = []
+    print(f"Processing {len(queries)} queries in batches of {batch_size}")
     
-    for emb in embs:
-        print("=" * 20)
-        res = index.search(emb, k_neighbors=10, complexity=100, beam_width=1)
-        print_results([res], c=corpus)
-        print("=" * 20)
-
+    for batch_start in range(0, len(queries), batch_size):
+        batch = queries[batch_start : batch_start + batch_size]
+        batch_embs = [encoder.encode(query).flatten() for query in batch]
+        for idx, emb in enumerate(batch_embs):
+            res = index.search(emb, k_neighbors=10, complexity=100, beam_width=1)
+            ids_list.append(res.identifiers)
+            from utils import calculate_recall_from_gt_file
+            r = calculate_recall_from_gt_file(K=10, ids=np.array(ids_list), gt_file=gt_files[selected_set])
+            print(f"Query {batch_start + idx}: Recall@10: {r}")
+    
+    ids_array = np.array(ids_list)
+    from utils import calculate_recall_from_gt_file
+    r = calculate_recall_from_gt_file(K=10, ids=ids_array, gt_file=gt_files[0])
+    print(f"Overall Recall@10: {r}")
+    
 if __name__ == "__main__":
     main()

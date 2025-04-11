@@ -23,6 +23,13 @@ run
 - Currently, the prefetch results are recorded to the local data strucure `pipeline_pool` and emitted to stdout. 
 - Later, we can adapt it to use a callback function, api, file, or other methods to connect LLM with DiskANN.
 
+## GT
+
+./compute_groundtruth --data_type float --dist_fn l2 --bas
+e_file /data/rso31/DiskANN_indexes/e5_diskann_0.6/ann_vectors.bin
+ --query_file squad_query_vectors.bin --gt_file squad_gt100 --K 100
+
+./compute_groundtruth --data_type float --dist_fn l2 --base_file /data/rso31/DiskANN_indexes/e5_diskann_0.6/ann_vectors.bin --query_file wq_query_vectors.bin --gt_file wq_gt100 --K 100
 
 ## how to run wiki_search.py
 
