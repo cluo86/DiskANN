@@ -2,15 +2,6 @@
 
 Refer to the [workflows/SSD_index.md](https://github.com/microsoft/DiskANN/blob/main/workflows/SSD_index.md) for building index.
 
-## Generate small query set
-Run create_small_query to generate a small subset of queries for testing.
-
-Usage: ./create_small_query <input_file> <output_file> <num_queries_to_extract>
-
-Example:
-```bash
-./create_small_query ../build/data/sift/sift_query.fbin ../build/data/sift/10q.fbin 10
-```
 
 ## Running the disk index search
 cd into build dir
@@ -35,3 +26,13 @@ e_file /data/rso31/DiskANN_indexes/e5_diskann_0.6/ann_vectors.bin
 
 uv sync
 uv build && uv pip install dist/*.whl
+
+## collect trace
+
+python wiki_search.py > trace
+./clean_trace.sh trace # get output.trace
+./rm_recall.sh output.trace # get output_cleaned.trace
+
+python process_trace.py output_cleaned.trace # get latency & recall by iter
+
+python plot_latency_recall.py
