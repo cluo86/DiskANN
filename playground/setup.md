@@ -29,10 +29,4 @@ uv build && uv pip install dist/*.whl
 
 ## collect trace
 
-python wiki_search.py > trace
-./clean_trace.sh trace # get output.trace
-./rm_recall.sh output.trace # get output_cleaned.trace
-
-python process_trace.py output_cleaned.trace # get latency & recall by iter
-
-python plot_latency_recall.py
+rm -rf saved_queries/ && python wiki_search.py > trace && ./cleanup_trace.sh trace && python process_trace.py && python plot_latency_recall.py
