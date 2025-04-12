@@ -18,6 +18,11 @@
 
 namespace diskann
 {
+
+// chengqi: add this struct to collect query stats for each iteration
+struct IterationDetails;
+
+
 struct QueryStats
 {
     float total_us = 0; // total time to process query in micros
@@ -33,6 +38,41 @@ struct QueryStats
     unsigned n_cmps = 0;       // # cmps
     unsigned n_cache_hits = 0; // # cache_hits
     unsigned n_hops = 0;       // # search hops
+
+    bool collect_trace = false;         // Flag to enable trace collection
+    std::vector<IterationDetails> iteration_stats;  // Per-iteration details
+    
+    // Optional query vector storage
+    bool store_query = false;
+    std::vector<float> query_vector;
+
+};
+
+struct IterationDetails
+{
+    uint32_t iteration_num = 0;         // Iteration number
+    float time_us = 0;                  // Cumulative time at this iteration
+    float iteration_time_us = 0;        // Time for just this iteration
+    uint32_t beam_width = 0;            // Actual beam width used
+    uint32_t ios_for_iteration = 0;     // Number of IOs in this iteration
+    uint32_t cache_hits_for_iteration = 0; // Cache hits in this iteration
+    
+    // Result set details
+    std::vector<uint32_t> result_ids;   // Top-k results at this iteration
+    
+    // Pipeline pool details
+    uint32_t pp_size = 0;               // Size of pipeline pool
+    std::vector<uint32_t> pp_ids;       // IDs in pipeline pool
+    
+    // Stability metrics
+    uint32_t stable_count = 0;          // Stable nodes count
+    uint32_t unstable_count = 0;        // Unstable nodes count
+    uint32_t first_unstable_idx = 0;    // First unstable index
+    float balancer = 0.0f;              // Balancer metric
+    uint32_t max_num = 0;               // Max num metric
+    uint32_t prefetch_offset = 0;       // Prefetch offset
+    uint32_t next_opt = 0;              // Next opt value
+
 };
 
 template <typename T>
