@@ -291,8 +291,99 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         else
             diskann::cout << std::endl;
 
-        // save stats to file
-        // std::string stats_file = result_output_prefix + "_" + std::to_string(L) + "_stats.trace";
+#define WRITE_STATS 1
+
+#ifdef WRITE_STATS
+        // Calculate and save iteration-level metrics instead of full traces
+        std::string latency_file = "latency_by_iteration_" + std::to_string(L) + "_W" + 
+                                  std::to_string(optimized_beamwidth) + ".csv";
+        std::string recall_file = "recall_at" + std::to_string(recall_at) + "_by_iteration_" + 
+                                 std::to_string(L) + "_W" + std::to_string(optimized_beamwidth) + ".csv";
+                                
+        diskann::cout << "Calculating metrics by iteration..." << std::endl;
+
+        // Find max iteration across all queries
+        uint32_t max_iteration = 0;
+        for (size_t i = 0; i < query_num; i++) {
+            for (const auto& iter : stats[i].iteration_stats) {
+                max_iteration = std::max(max_iteration, iter.iteration_num);
+            }
+        }
+        
+        // Initialize iteration stats
+        std::vector<double> latency_by_iteration(max_iteration + 1, 0.0);
+        std::vector<uint32_t> iteration_counts(max_iteration + 1, 0);
+        std::vector<std::vector<uint32_t>> results_by_iteration(max_iteration + 1);
+        
+        // Collect data for each iteration
+        for (size_t i = 0; i < query_num; i++) {
+            for (const auto& iter : stats[i].iteration_stats) {
+                uint32_t iter_num = iter.iteration_num;
+                if (iter_num <= max_iteration) {
+                    latency_by_iteration[iter_num] += iter.time_us;
+                    iteration_counts[iter_num]++;
+                    
+                    // Store top-k results for this iteration
+                    if (gt_ids != nullptr && iter.result_ids.size() >= recall_at) {
+                        // Collect at most recall_at IDs
+                        for (size_t j = 0; j < std::min(recall_at, (uint32_t)iter.result_ids.size()); j++) {
+                            results_by_iteration[iter_num].push_back(iter.result_ids[j]);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Calculate average latency by iteration
+        std::ofstream latency_out(latency_file);
+        if (latency_out.is_open()) {
+            latency_out << "Iteration,AverageLatency_us\n";
+            for (uint32_t iter_num = 1; iter_num <= max_iteration; iter_num++) {
+                if (iteration_counts[iter_num] > 0) {
+                    double avg_latency = latency_by_iteration[iter_num] / iteration_counts[iter_num];
+                    latency_out << iter_num << "," << std::fixed << std::setprecision(2) << avg_latency << "\n";
+                }
+            }
+            latency_out.close();
+            diskann::cout << "Saved latency metrics to " << latency_file << std::endl;
+        }
+        
+        // Calculate recall by iteration if ground truth is available
+        if (gt_ids != nullptr) {
+            std::ofstream recall_out(recall_file);
+            if (recall_out.is_open()) {
+                recall_out << "Iteration,Recall@" << recall_at << "\n";
+                
+                for (uint32_t iter_num = 1; iter_num <= max_iteration; iter_num++) {
+                    if (!results_by_iteration[iter_num].empty()) {
+                        // Reshape results to match expected format for calculate_recall
+                        // Each query has recall_at results
+                        uint32_t queries_with_this_iteration = results_by_iteration[iter_num].size() / recall_at;
+                        if (queries_with_this_iteration > 0) {
+                            double recall = diskann::calculate_recall(
+                                queries_with_this_iteration, 
+                                gt_ids, 
+                                gt_dists, 
+                                gt_dim,
+                                results_by_iteration[iter_num].data(), 
+                                recall_at, 
+                                recall_at);
+                            
+                            recall_out << iter_num << "," << std::fixed << std::setprecision(6) << recall << "\n";
+                        } else {
+                            recall_out << iter_num << ",0.000000\n";
+                        }
+                    } else {
+                        recall_out << iter_num << ",0.000000\n";
+                    }
+                }
+                recall_out.close();
+                diskann::cout << "Saved recall metrics to " << recall_file << std::endl;
+            }
+        }
+#endif
+        
+#ifdef WRITE_TRACE
         std::string stats_file =  "stats_" + std::to_string(L) + "_W" + 
                                 std::to_string(optimized_beamwidth) + ".trace";
                                 
@@ -323,14 +414,12 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
                     // Add pipeline pool info if available
                     trace_out << " | Pipeline Pool (size=" << iter.pp_size << "):";
                     if (iter.pp_size > 0 && !iter.pp_ids.empty()) {
-                        for (size_t j = 0; j < iter.pp_ids.size() && j < 5; j++) {
+                        for (size_t j = 0; j < iter.pp_ids.size(); j++) {
                             if (j == 0) trace_out << " ";
                             trace_out << iter.pp_ids[j];
-                            if (j < iter.pp_ids.size() - 1 && j < 4) 
+                            if (j < iter.pp_ids.size() - 1) 
                                 trace_out << ", ";
                         }
-                        if (iter.pp_ids.size() > 5) 
-                            trace_out << "...";
                     }
                     
                     // Add stability metrics
@@ -353,6 +442,8 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         } else {
             diskann::cerr << "Failed to open trace file for writing: " << stats_file << std::endl;
         }
+#endif
+
         delete[] stats;
     }
 

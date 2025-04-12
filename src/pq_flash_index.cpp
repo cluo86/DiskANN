@@ -1629,8 +1629,6 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
 
         hops++;
 
-#define COLLECT_TRACES 1
-#ifdef COLLECT_TRACES
         // chengqi: logic to collect traces
         auto time_elapsed = query_timer.elapsed();
         // get indices for this iteration
@@ -1648,214 +1646,180 @@ void PQFlashIndex<T, LabelT>::cached_beam_search(const T *query1, const uint64_t
                 break;
             }
         }
-        // print out the indices
-        diskann::cout << "Iteration " << hops << " (time=" << time_elapsed << " us) ";
-        for (size_t i = 0; i < indices_this_iter.size(); ++i)
-        {
-            diskann::cout << indices_this_iter[i] << " ";
-        }
-        
-#endif
 
-#define AQUA 1
-#ifdef AQUA
-// #define DEBUG 1
-        // chengqi: logic to emit early
-        /**
-         * Per section4.1, result set will be reranked in each iteration.
-         * Termination condition should still be L \ V != ∅
-         */
-        // Assume we don't need to use_reorder_data
-        if (hops == next_opt)
-        {
-
-            std::sort(full_retset.begin(), full_retset.end()); // default to use L2
-
-
-            // update postiion history for all elements in R
-            for (size_t i = 0; i < full_retset.size(); ++i) {
-                uint32_t id = full_retset[i].id;
-                
-                // add current position to history
-                auto& history = element_position_history[id];
-                history.push_back(std::make_pair(hops, i));
-                
-                // maintain bounded history size
-                if (history.size() > POSITION_HISTORY_RETENTION) {
-                    history.erase(history.begin());
-                }
-            }
-
-            int32_t stability = 0, unstability = 0;
-            size_t first_unstable_idx = prefetch_offset;
-
-            // update stability and unstability
-            /**
-             * stability: # of elements with equal positions in R between two prefetching operations.
-             * unstability: # of elements with different positions in R between two prefetching
-             * operations, and these elements have already been prefetched
-             */
-            for (size_t i = 0; i < prev_full_retset.size(); ++i)
-            {
-                if (full_retset[i].id == prev_full_retset[i].id)
-                {
-                    stability++;
-                } else 
-                {
-                    if (i < prefetch_offset)
-                    {
-                        unstability++;
-                        if (i < first_unstable_idx)
-                        {
-                            first_unstable_idx = i;
-                        }
-                    }
-                }
-            }
-
-            // error detection: remove elements from pp whose position has changed
-            if (unstability > 0)
-            {
-                pipeline_pool.erase(pipeline_pool.begin() + first_unstable_idx, pipeline_pool.end());
-                prefetch_offset = first_unstable_idx;
-            }
-
-            int32_t pp_size = (int32_t) pipeline_pool.size();
-            // update balancer
-            // can balancer be negative???
-            balancer = (stability - 4 * unstability + balancer) / 2.0f;
-            // update max num
-            if (((stability - pp_size + balancer) / 2.0f) < 0)
-            {
-                max_num = 0;
-            }
-            else
-            {
-                max_num = std::floor((stability - pp_size + balancer) / 2.0f);
-            }
-
-            // perform prefetching w/ historical positions
-            for (uint32_t i = 0; i < max_num; ++i)
-            {
-                if (prefetch_offset >= k_search)
-                {
-                    break;
-                }
-
-                uint32_t candidate_id = full_retset[prefetch_offset].id;
-                auto& history = element_position_history[candidate_id];
-                
-                // check if position has been stable across history
-                bool is_stable = true;
-                if (history.size() == POSITION_HISTORY_RETENTION) {
-                    uint32_t current_pos = prefetch_offset;
-                    // check if position has changed in history
-                    for (size_t j = 1; j < history.size(); j++) {
-                        if (history[j].second != current_pos) {
-                            is_stable = false;
-                            break;
-                        }
-                    }
-                } else {
-                    // if there's no history, we can't determine stability
-                    // that's to say, we can't prefetch this element 
-                    // if its position has not stayed the same for the retention window
-                    is_stable = false;
-                }
-
-                if (is_stable) {
-                    pipeline_pool.push_back(candidate_id);
-                    prefetch_offset++;
-                } else {
-                    break; // stop prefetching if we encounter an unstable element
-                }
-
-            }
-
-            // record last R for future cmp
-            prev_full_retset = full_retset;
-
-            // update Opt: calculate next prefetching iteration
-            /**
-             * chengqi: AquaPipe mentioned that we need to ensure
-             * Opt_{n+1} > Opt_n. However, it appears that equation 1 cannot guarantee this.
-             * e.g., if pp.size = 0 and balancer = 1, using equation 1 as-is will cause a liveness
-             * issue and stall prefetching.
-             *
-             */
-            // next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
-            float prefetching_progress = (float) pp_size / (float) k_search;
-            if (std::floor(prefetching_progress * pp_size + 1.0f - balancer) > 0)
-            {
-                // will it grow too fast??
-                next_opt = next_opt + std::floor(prefetching_progress * pp_size + 1.0f - balancer);
-            }
-            else
-            {
-                next_opt = next_opt + 1;                
-            }
+        // poplulate stats to collect trace
+        if (stats != nullptr) {
+            // Create iteration details
+            IterationDetails iter_details;
+            iter_details.iteration_num = hops;
+            iter_details.time_us = time_elapsed;
             
+            // Copy result IDs
+            iter_details.result_ids = indices_this_iter;
 
-#ifdef COLLECT_TRACES
-            // diskann::cout << "Iteration " << hops << " Pipeline Pool (size=" << pipeline_pool.size() << "): ";
-            diskann::cout << " | Pipeline Pool (size=" << pipeline_pool.size() << "): ";
-            for (size_t i = 0; i < pipeline_pool.size(); ++i)
+    // start of aquapipe
+            // chengqi: logic to emit early
+            /**
+             * Per section4.1, result set will be reranked in each iteration.
+             * Termination condition should still be L \ V != ∅
+             */
+            // Assume we don't need to use_reorder_data
+            if (hops == next_opt)
             {
-                diskann::cout << pipeline_pool[i];
-                if (i < pipeline_pool.size() - 1)
-                    diskann::cout << ", ";
-            }
-            diskann::cout << " | Opt=" << hops << " Stability metrics: stable=" << stability
-                          << ", unstable=" << unstability << ", first_unstable_idx=" << first_unstable_idx
-                          << ", balancer=" << balancer << ", max_num=" << max_num
-                          << ", prefetch_offset=" << prefetch_offset << ", next_opt=" << next_opt
-                          << ", PPSIZE=" << pp_size;
-#endif
-#ifdef DEBUG
-            // debug actual result sets (IDs and distances)
-            if (unstability > 0)
-            {
-                diskann::cout << "  Unstable results detected. First few items:" << std::endl;
-                uint32_t print_limit = (prefetch_offset > 10) ? 10 : prefetch_offset;
 
-                diskann::cout << "  Pos\tCurrentID\tPrevID\tStatus" << std::endl;
-                for (uint32_t i = 0; i < print_limit; ++i)
+                std::sort(full_retset.begin(), full_retset.end()); // default to use L2
+
+
+                // update postiion history for all elements in R
+                for (size_t i = 0; i < full_retset.size(); ++i) {
+                    uint32_t id = full_retset[i].id;
+                    
+                    // add current position to history
+                    auto& history = element_position_history[id];
+                    history.push_back(std::make_pair(hops, i));
+                    
+                    // maintain bounded history size
+                    if (history.size() > POSITION_HISTORY_RETENTION) {
+                        history.erase(history.begin());
+                    }
+                }
+
+                int32_t stability = 0, unstability = 0;
+                size_t first_unstable_idx = prefetch_offset;
+
+                // update stability and unstability
+                /**
+                 * stability: # of elements with equal positions in R between two prefetching operations.
+                 * unstability: # of elements with different positions in R between two prefetching
+                 * operations, and these elements have already been prefetched
+                 */
+                for (size_t i = 0; i < prev_full_retset.size(); ++i)
                 {
-                    bool is_stable = (full_retset[i].id == prev_full_retset[i].id);
-                    diskann::cout << "  " << i << "\t" << full_retset[i].id << "\t\t" << prev_full_retset[i].id << "\t"
-                                  << (is_stable ? "STABLE" : "CHANGED") << std::endl;
+                    if (full_retset[i].id == prev_full_retset[i].id)
+                    {
+                        stability++;
+                    } else 
+                    {
+                        if (i < prefetch_offset)
+                        {
+                            unstability++;
+                            if (i < first_unstable_idx)
+                            {
+                                first_unstable_idx = i;
+                            }
+                        }
+                    }
                 }
-                if (first_unstable_idx < print_limit)
+
+                // error detection: remove elements from pp whose position has changed
+                if (unstability > 0)
                 {
-                    diskann::cout << "  First unstable position: " << first_unstable_idx
-                                  << " (Current: " << full_retset[first_unstable_idx].id
-                                  << ", Prev: " << prev_full_retset[first_unstable_idx].id << ")" << std::endl;
+                    pipeline_pool.erase(pipeline_pool.begin() + first_unstable_idx, pipeline_pool.end());
+                    prefetch_offset = first_unstable_idx;
                 }
-            }
-#endif
 
-#ifdef WRITE_TO_FILE
-            // for now, just write out the pp to a local file
-            std::ofstream pp_file("pipeline_pool.txt", std::ios::app);
-            if (pp_file.is_open()) {
-                pp_file << "Iteration " << hops << ": ";
-                for (size_t i = 0; i < pipeline_pool.size(); ++i) {
-                    pp_file << pipeline_pool[i];
-                    if (i < pipeline_pool.size() - 1)
-                        pp_file << ",";
+                int32_t pp_size = (int32_t) pipeline_pool.size();
+                // update balancer
+                // can balancer be negative???
+                balancer = (stability - 4 * unstability + balancer) / 2.0f;
+                // update max num
+                if (((stability - pp_size + balancer) / 2.0f) < 0)
+                {
+                    max_num = 0;
                 }
-                pp_file << std::endl;
-                pp_file.close();
-            }
-#endif
+                else
+                {
+                    max_num = std::floor((stability - pp_size + balancer) / 2.0f);
+                }
 
+                // perform prefetching w/ historical positions
+                for (uint32_t i = 0; i < max_num; ++i)
+                {
+                    if (prefetch_offset >= k_search)
+                    {
+                        break;
+                    }
+
+                    uint32_t candidate_id = full_retset[prefetch_offset].id;
+                    auto& history = element_position_history[candidate_id];
+                    
+                    // check if position has been stable across history
+                    bool is_stable = true;
+                    if (history.size() == POSITION_HISTORY_RETENTION) {
+                        uint32_t current_pos = prefetch_offset;
+                        // check if position has changed in history
+                        for (size_t j = 1; j < history.size(); j++) {
+                            if (history[j].second != current_pos) {
+                                is_stable = false;
+                                break;
+                            }
+                        }
+                    } else {
+                        // if there's no history, we can't determine stability
+                        // that's to say, we can't prefetch this element 
+                        // if its position has not stayed the same for the retention window
+                        is_stable = false;
+                    }
+
+                    if (is_stable) {
+                        pipeline_pool.push_back(candidate_id);
+                        prefetch_offset++;
+                    } else {
+                        break; // stop prefetching if we encounter an unstable element
+                    }
+
+                }
+
+                // record last R for future cmp
+                prev_full_retset = full_retset;
+
+                // update Opt: calculate next prefetching iteration
+                /**
+                 * chengqi: AquaPipe mentioned that we need to ensure
+                 * Opt_{n+1} > Opt_n. However, it appears that equation 1 cannot guarantee this.
+                 * e.g., if pp.size = 0 and balancer = 1, using equation 1 as-is will cause a liveness
+                 * issue and stall prefetching.
+                 *
+                 */
+                // next_opt = next_opt + std::floor((float)(pp_size / k_search) * pp_size + 1.0f - balancer);
+                float prefetching_progress = (float) pp_size / (float) k_search;
+                if (std::floor(prefetching_progress * pp_size + 1.0f - balancer) > 0)
+                {
+                    // will it grow too fast??
+                    next_opt = next_opt + std::floor(prefetching_progress * pp_size + 1.0f - balancer);
+                }
+                else
+                {
+                    next_opt = next_opt + 1;                
+                }
+
+    // end of aquapipe
+
+                // add pipeline pool details to stats
+                iter_details.pp_size = pipeline_pool.size();
+                iter_details.pp_ids = pipeline_pool;
+
+                iter_details.stable_count = stability;
+                iter_details.unstable_count = unstability;
+                iter_details.first_unstable_idx = first_unstable_idx;
+                iter_details.balancer = balancer;
+                iter_details.max_num = max_num;
+                iter_details.prefetch_offset = prefetch_offset;
+                iter_details.next_opt = next_opt;
+
+            } else {
+                iter_details.pp_size = 0;
+                iter_details.stable_count = 0;
+                iter_details.unstable_count = 0;
+                iter_details.first_unstable_idx = 0;
+                iter_details.balancer = 0.0f;
+                iter_details.max_num = 0;
+                iter_details.prefetch_offset = 0;
+                iter_details.next_opt = next_opt;  // This is still valid for any iteration
+            }
+
+            stats->iteration_stats.push_back(iter_details);
         }
-
-#endif
-
-#ifdef COLLECT_TRACES
-        diskann::cout << std::endl; 
-#endif
     }
 
     // re-sort by distance
