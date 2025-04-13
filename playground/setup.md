@@ -29,7 +29,7 @@ e_file /data/rso31/DiskANN_indexes/e5_diskann_0.6/ann_vectors.bin
 
 - set DISKANN_WRITE_TRACE=1 if we want to save traces to file
 
-./build/apps/search_disk_index --data_type float --dist_fn l2 --index_path_prefix /data/FlashRAG_data/indexes/e5_diskann_0.6/ann --query_file squad_query_vectors_400.bin --gt_file gt_files/squad_gt10 -K 10 -L 1024 --result_path res/ --num_nodes_to_cache 210153 -W 8
+../build/apps/search_disk_index --data_type float --dist_fn l2 --index_path_prefix /data/FlashRAG_data/indexes/e5_diskann_0.6/ann --query_file squad_query_vectors_400.bin --gt_file gt_files/squad_gt10 -K 10 -L 1024 --result_path res/ --num_nodes_to_cache 210153 -W 8
 
 this will generate two csv files
 latency_by_iteration_L{l_value}_W{beam_width}.csv
