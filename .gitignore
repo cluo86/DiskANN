@@ -12,6 +12,8 @@
 playground/saved_queries
 playgoround/*.log
 playgoround/*.trace
+playgoround/*.png
+*.csv
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

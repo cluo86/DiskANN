@@ -292,12 +292,11 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
             diskann::cout << std::endl;
 
 #define WRITE_STATS 1
-
 #ifdef WRITE_STATS
         // Calculate and save iteration-level metrics instead of full traces
-        std::string latency_file = "latency_by_iteration_" + std::to_string(L) + "_W" + 
+        std::string latency_file = "latency_by_iteration_L" + std::to_string(L) + "_W" + 
                                   std::to_string(optimized_beamwidth) + ".csv";
-        std::string recall_file = "recall_at" + std::to_string(recall_at) + "_by_iteration_" + 
+        std::string recall_file = "recall_at" + std::to_string(recall_at) + "_by_iteration_L" + 
                                  std::to_string(L) + "_W" + std::to_string(optimized_beamwidth) + ".csv";
                                 
         diskann::cout << "Calculating metrics by iteration..." << std::endl;
@@ -383,66 +382,75 @@ int search_disk_index(diskann::Metric &metric, const std::string &index_path_pre
         }
 #endif
         
-#ifdef WRITE_TRACE
-        std::string stats_file =  "stats_" + std::to_string(L) + "_W" + 
-                                std::to_string(optimized_beamwidth) + ".trace";
+        // Use environment variable to control trace writing
+        if (const char* trace_env = std::getenv("DISKANN_WRITE_TRACE")) {
+            bool write_trace = (std::string(trace_env) == "1" || 
+                                std::string(trace_env) == "true" ||
+                                std::string(trace_env) == "yes" ||
+                                std::string(trace_env) == "on");
                                 
-        diskann::cout << "Writing search traces to: " << stats_file << std::endl;
+            if (write_trace) {
+                std::string stats_file = "stats_L" + std::to_string(L) + "_W" + 
+                                        std::to_string(optimized_beamwidth) + ".trace";
+                                        
+                diskann::cout << "Writing search traces to: " << stats_file << std::endl;
 
-        std::ofstream trace_out(stats_file);
-        if (trace_out.is_open()) {
-            // Loop through all queries
-            for (size_t i = 0; i < query_num; i++) {
-                // Make sure we have iterations to write
-                if (stats[i].iteration_stats.empty()) {
-                    continue;
-                }
-                
-                // Write header for this query
-                trace_out << "Query " << i << " (total_time=" << stats[i].total_us << " us):" << std::endl;
-                
-                // Write each iteration for this query
-                for (const auto& iter : stats[i].iteration_stats) {
-                    // Basic iteration info and top result IDs
-                    trace_out << "Iteration " << iter.iteration_num << " (time=" << iter.time_us << " us)";
-                    
-                    // Add result IDs - we'll show up to 10
-                    for (size_t j = 0; j < iter.result_ids.size() && j < 10; j++) {
-                        trace_out << " " << iter.result_ids[j];
-                    }
-                    
-                    // Add pipeline pool info if available
-                    trace_out << " | Pipeline Pool (size=" << iter.pp_size << "):";
-                    if (iter.pp_size > 0 && !iter.pp_ids.empty()) {
-                        for (size_t j = 0; j < iter.pp_ids.size(); j++) {
-                            if (j == 0) trace_out << " ";
-                            trace_out << iter.pp_ids[j];
-                            if (j < iter.pp_ids.size() - 1) 
-                                trace_out << ", ";
+                std::ofstream trace_out(stats_file);
+                if (trace_out.is_open()) {
+                    // Loop through all queries
+                    for (size_t i = 0; i < query_num; i++) {
+                        // Make sure we have iterations to write
+                        if (stats[i].iteration_stats.empty()) {
+                            continue;
                         }
+                        
+                        // Write header for this query
+                        trace_out << "Query " << i << " (total_time=" << stats[i].total_us << " us):" << std::endl;
+                        
+                        // Write each iteration for this query
+                        for (const auto& iter : stats[i].iteration_stats) {
+                            // Basic iteration info and top result IDs
+                            trace_out << "Iteration " << iter.iteration_num << " (time=" << iter.time_us << " us)";
+                            
+                            // Add result IDs - we'll show up to 10
+                            for (size_t j = 0; j < iter.result_ids.size() && j < 10; j++) {
+                                trace_out << " " << iter.result_ids[j];
+                            }
+                            
+                            // Add pipeline pool info if available
+                            trace_out << " | Pipeline Pool (size=" << iter.pp_size << "):";
+                            if (iter.pp_size > 0 && !iter.pp_ids.empty()) {
+                                for (size_t j = 0; j < iter.pp_ids.size(); j++) {
+                                    if (j == 0) trace_out << " ";
+                                    trace_out << iter.pp_ids[j];
+                                    if (j < iter.pp_ids.size() - 1) 
+                                        trace_out << ", ";
+                                }
+                            }
+                            
+                            // Add stability metrics
+                            trace_out << " | Opt=" << iter.next_opt;
+                            trace_out << " stable=" << iter.stable_count;
+                            trace_out << ", unstable=" << iter.unstable_count;
+                            if (iter.first_unstable_idx > 0)
+                                trace_out << ", first_unstable_idx=" << iter.first_unstable_idx;
+                            trace_out << ", balancer=" << iter.balancer;
+                            trace_out << ", max_num=" << iter.max_num;
+                            trace_out << ", prefetch_offset=" << iter.prefetch_offset;
+                            trace_out << ", next_opt=" << iter.next_opt;
+                            trace_out << ", PPSIZE=" << iter.pp_size;
+                            
+                            trace_out << std::endl;
+                        }
+                        trace_out << std::endl; // Add extra line between queries
                     }
-                    
-                    // Add stability metrics
-                    trace_out << " | Opt=" << iter.next_opt;
-                    trace_out << " stable=" << iter.stable_count;
-                    trace_out << ", unstable=" << iter.unstable_count;
-                    if (iter.first_unstable_idx > 0)
-                        trace_out << ", first_unstable_idx=" << iter.first_unstable_idx;
-                    trace_out << ", balancer=" << iter.balancer;
-                    trace_out << ", max_num=" << iter.max_num;
-                    trace_out << ", prefetch_offset=" << iter.prefetch_offset;
-                    trace_out << ", next_opt=" << iter.next_opt;
-                    trace_out << ", PPSIZE=" << iter.pp_size;
-                    
-                    trace_out << std::endl;
+                    trace_out.close();
+                } else {
+                    diskann::cerr << "Failed to open trace file for writing: " << stats_file << std::endl;
                 }
-                trace_out << std::endl; // Add extra line between queries
             }
-            trace_out.close();
-        } else {
-            diskann::cerr << "Failed to open trace file for writing: " << stats_file << std::endl;
         }
-#endif
+
 
         delete[] stats;
     }
